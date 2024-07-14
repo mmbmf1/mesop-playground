@@ -1,0 +1,2 @@
+[console_scripts]
+mesop = mesop.bin.bin:run_main
