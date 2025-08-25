@@ -1,8 +1,8 @@
 import mesop as me
 
 # Import hello_world_page app from hello_world_page.py
-from hello_world import app as hello_world_main
-from counter import main as counter_main
+from .hello_world import app as hello_world_main
+from .counter import main as counter_main
 
 # Define click events and navigation functions
 def on_click_page_2(e: me.ClickEvent):
