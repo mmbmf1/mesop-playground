@@ -15,7 +15,7 @@ def button_click(action: me.ClickEvent):
     state = me.state(State)
     for val in generate_str():
         # print(val)
-        state.string += f"{val + " "}"
+        state.string += f"{val} "
         yield
 
 @me.page(path="/streaming")
