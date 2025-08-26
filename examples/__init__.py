@@ -7,3 +7,4 @@ from . import counter
 from . import loading
 from . import streaming
 from . import multi_page
+from . import log_monitor
