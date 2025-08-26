@@ -3,19 +3,17 @@ import psycopg2
 import os
 import json
 from dotenv import load_dotenv
-from dataclasses import field
 
 # load environment variables from .env file
 load_dotenv()
 
 @me.stateclass
 class State:
-    connection_status: str = "not connected"
-    connection_error: str = ""
     logs_json: str = "[]"
     stats_json: str = "[]"
     current_offset: int = 0
     logs_per_page: int = 100
+    is_loading: bool = False
 
 def get_db_connection():
     """get database connection"""
@@ -26,27 +24,6 @@ def get_db_connection():
         password=os.getenv('DB_PASSWORD'),
         port=os.getenv('DB_PORT', '5432')
     )
-
-def test_connection(event: me.ClickEvent):
-    """test database connection"""
-    state = me.state(State)
-    state.connection_status = "testing connection..."
-    state.connection_error = ""
-    
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT to_char(NOW(), 'YYYY-MM-DD HH24:MI')")
-        result = cursor.fetchone()
-        
-        cursor.close()
-        conn.close()
-        
-        state.connection_status = f"connected! server time: {result[0]}"
-        
-    except Exception as e:
-        state.connection_status = "connection failed"
-        state.connection_error = str(e)
 
 def fetch_stats():
     """fetch log stats by app for last 24 hours"""
@@ -115,54 +92,94 @@ def fetch_logs(offset=0, limit=100):
 def refresh_data(event: me.ClickEvent):
     """refresh both stats and logs"""
     state = me.state(State)
+    state.is_loading = True
     state.current_offset = 0  # reset to first page
     
-    state.logs_json = json.dumps(fetch_logs(0, state.logs_per_page))
-    state.stats_json = json.dumps(fetch_stats())
+    try:
+        state.logs_json = json.dumps(fetch_logs(0, state.logs_per_page))
+        state.stats_json = json.dumps(fetch_stats())
+    except Exception as e:
+        print(f"refresh failed: {e}")
+    finally:
+        state.is_loading = False
 
 def load_more(event: me.ClickEvent):
     """load more logs"""
     state = me.state(State)
-    state.current_offset += state.logs_per_page
+    state.is_loading = True
     
-    # fetch additional logs
-    new_logs = fetch_logs(state.current_offset, state.logs_per_page)
-    
-    # combine with existing logs
     try:
-        existing_logs = json.loads(state.logs_json)
-        all_logs = existing_logs + new_logs
-        state.logs_json = json.dumps(all_logs)
-    except:
-        state.logs_json = json.dumps(new_logs)
+        state.current_offset += state.logs_per_page
+        
+        # fetch additional logs
+        new_logs = fetch_logs(state.current_offset, state.logs_per_page)
+        
+        if new_logs:  # only add if we got new logs
+            # combine with existing logs
+            try:
+                existing_logs = json.loads(state.logs_json)
+                all_logs = existing_logs + new_logs
+                state.logs_json = json.dumps(all_logs)
+            except:
+                state.logs_json = json.dumps(new_logs)
+        else:
+            # no more logs to load
+            state.current_offset -= state.logs_per_page  # revert the increment
+    except Exception as e:
+        print(f"load more failed: {e}")
+    finally:
+        state.is_loading = False
 
 def display_stats(stats):
     """display stats section"""
     if stats:
-        me.text(" log stats (last 24 hours):", style=me.Style(font_weight="bold"))
+        me.text("log stats (last 24 hours):", style=me.Style(font_weight="bold", font_size="1.2rem"))
+        total_logs = sum(stat['count'] for stat in stats)
+        me.text(f"total logs: {total_logs}", style=me.Style(color="#666", font_size="0.9rem"))
+        me.text("")  # spacing
+        
         for stat in stats:
-            me.text(f"{stat['app']}: {stat['count']} logs")
-        me.text("---")
+            me.text(f"{stat['app']}: {stat['count']} logs", style=me.Style(color="#666"))
+        me.text("---", style=me.Style(color="#ddd"))
 
 def display_logs(logs):
     """display logs section"""
     if logs:
-        me.text(f"recent logs ({len(logs)} displayed):")
-        for log in logs:
-            me.text(f"id: {log['id']} | app: {log['app']} | date: {log['date']}")
-            if log['client_id']:
-                me.text(f"client_id: {log['client_id']}")
-            if log['substation']:
-                me.text(f"substation: {log['substation']}")
-            if log['feeder']:
-                me.text(f"feeder: {log['feeder']}")
-            me.text(f"metadata: {log['metadata']}")
-            me.text("---")
+        me.text(f"recent logs ({len(logs)} displayed):", style=me.Style(font_weight="bold", font_size="1.2rem"))
         
-        # show load more button if we have logs
-        me.button("load more logs", on_click=load_more)
+        for i, log in enumerate(logs):
+            # log header with ID and app
+            me.text(f"Log #{log['id']} - {log['app']}", style=me.Style(font_weight="bold", color="#2c5aa0"))
+            
+            # date
+            me.markdown(f"**Date:** {log['date']}")
+            
+            # optional fields
+            if log['client_id']:
+                me.markdown(f"**Client ID:** {log['client_id']}")
+            if log['substation']:
+                me.markdown(f"**Substation:** {log['substation']}")
+            if log['feeder']:
+                me.markdown(f"**Feeder:** {log['feeder']}")
+            
+            # metadata with better formatting
+            if log['metadata'] and log['metadata'] != 'None':
+                me.markdown(f"**Metadata:** {log['metadata']}")
+            else:
+                me.text("Metadata: (none)", style=me.Style(color="#999", font_style="italic"))
+            
+            # simple separator between logs
+            if i < len(logs) - 1:
+                me.text("---", style=me.Style(color="#ddd"))
+        
+        # load more button with better state handling
+        state = me.state(State)
+        if state.is_loading:
+            me.text("loading...", style=me.Style(color="#666", font_style="italic"))
+        else:
+            me.button("load more logs", on_click=load_more, style=me.Style(font_size="1.1rem"))
     else:
-        me.text("no logs found")
+        me.text("no logs found", style=me.Style(color="#666", font_style="italic"))
 
 @me.page(path="/log-monitor")
 def log_monitor():
@@ -173,34 +190,32 @@ def log_monitor():
         state.logs_json = json.dumps(fetch_logs(0, state.logs_per_page))
         state.stats_json = json.dumps(fetch_stats())
     
-    # header
-    me.text("📊 log monitor", style=me.Style(font_size="2rem", font_weight="bold"))
-    me.text(f"status: {state.connection_status}")
-    
-    if state.connection_error:
-        me.text(f"error: {state.connection_error}", style=me.Style(color="#dc3545"))
-    
-    me.button("test connection", on_click=test_connection)
-    me.text("---")
-    
-    # stats section
-    try:
-        stats = json.loads(state.stats_json)
-        display_stats(stats)
-    except:
-        pass
-    
-    # refresh controls
-    me.button("refresh data", on_click=refresh_data)
-    
-    me.text("---")
-    
-    # logs section
-    try:
-        logs = json.loads(state.logs_json)
-        display_logs(logs)
-    except:
-        me.text("no logs found")
+    # wrap everything in a box with cleaner left padding
+    with me.box(style=me.Style(padding=me.Padding.all(20))):
+        # header
+        me.text("📊 log monitor", style=me.Style(font_size="2rem", font_weight="bold"))
+        
+        # button row with better layout
+        me.text("")  # spacing
+        me.button("refresh data", on_click=refresh_data, style=me.Style(font_size="1.1rem"))
+        
+        me.text("---", style=me.Style(color="#ddd"))
+        
+        # stats section
+        try:
+            stats = json.loads(state.stats_json)
+            display_stats(stats)
+        except:
+            pass
+        
+        me.text("---", style=me.Style(color="#ddd"))
+        
+        # logs section
+        try:
+            logs = json.loads(state.logs_json)
+            display_logs(logs)
+        except:
+            me.text("no logs found")
 
 if __name__ == "__main__":
     me.run()
