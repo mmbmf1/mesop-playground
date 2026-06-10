@@ -1,4 +1,5 @@
 import mesop as me
+from functools import partial
 
 # import all examples to register their routes
 from examples import (
@@ -9,6 +10,10 @@ from examples import (
     multi_page,
     log_monitor
 )
+
+def navigate_to(e: me.ClickEvent, path: str):
+    me.navigate(path)
+
 
 @me.page(path="/")
 def home():
@@ -68,7 +73,10 @@ def home():
             me.markdown(f"### {example['title']}")
             me.markdown(f"**{example['description']}**")
             me.markdown(f"💡 **Concept:** {example['concept']}")
-            me.button(f"Try {example['title']}", on_click=lambda e, path=example["path"]: me.navigate(path))
+            me.button(
+                f"Try {example['title']}",
+                on_click=partial(navigate_to, path=example["path"]),
+            )
         
         me.markdown("## 🎯 What I Learned")
         
